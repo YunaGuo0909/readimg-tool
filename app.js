@@ -1,8 +1,12 @@
+const MAX_IMAGES = 20;
+
 const cameraInput = document.getElementById('cameraInput');
 const galleryInput = document.getElementById('galleryInput');
 const dropZone = document.getElementById('dropZone');
-const previewContainer = document.getElementById('previewContainer');
-const previewImage = document.getElementById('previewImage');
+const thumbnailStrip = document.getElementById('thumbnailStrip');
+const imageCounter = document.getElementById('imageCounter');
+const imageCountText = document.getElementById('imageCountText');
+const clearImagesBtn = document.getElementById('clearImagesBtn');
 const statusSection = document.getElementById('statusSection');
 const statusText = document.getElementById('statusText');
 const progressFill = document.getElementById('progressFill');
@@ -14,10 +18,12 @@ const copyBtn = document.getElementById('copyBtn');
 const speedRange = document.getElementById('speedRange');
 const speedValue = document.getElementById('speedValue');
 
+let imageQueue = [];       // { file, dataUrl }
 let recognizedText = '';
 let detectedLang = 'unknown';
 let isSpeaking = false;
 let speechRate = 1.0;
+let keepAliveTimer = null;
 
 // --- Speed control ---
 speedRange.addEventListener('input', () => {
@@ -26,26 +32,28 @@ speedRange.addEventListener('input', () => {
 });
 
 // --- Image input: file picker ---
-cameraInput.addEventListener('change', handleImageSelect);
-galleryInput.addEventListener('change', handleImageSelect);
-
-function handleImageSelect(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    loadFileAsImage(file);
+cameraInput.addEventListener('change', (e) => {
+    addFiles(e.target.files);
     e.target.value = '';
-}
+});
+galleryInput.addEventListener('change', (e) => {
+    addFiles(e.target.files);
+    e.target.value = '';
+});
 
 // --- Image input: paste ---
 document.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
+    const files = [];
     for (const item of items) {
         if (item.type.startsWith('image/')) {
-            e.preventDefault();
-            loadFileAsImage(item.getAsFile());
-            return;
+            files.push(item.getAsFile());
         }
+    }
+    if (files.length) {
+        e.preventDefault();
+        addFiles(files);
     }
 });
 
@@ -60,52 +68,135 @@ dropZone.addEventListener('dragleave', () => {
 dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith('image/')) {
-        loadFileAsImage(file);
-    }
+    const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+    if (files.length) addFiles(files);
 });
 
-function loadFileAsImage(file) {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        previewImage.src = ev.target.result;
-        previewContainer.hidden = false;
-        performOCR(file);
-    };
-    reader.readAsDataURL(file);
+// --- Add files to queue ---
+function addFiles(fileList) {
+    const files = [...fileList].filter(f => f.type.startsWith('image/'));
+    const remaining = MAX_IMAGES - imageQueue.length;
+    if (remaining <= 0) {
+        showToast(`Maximum ${MAX_IMAGES} images reached`);
+        return;
+    }
+    const toAdd = files.slice(0, remaining);
+    if (files.length > remaining) {
+        showToast(`Only added ${remaining} of ${files.length} (limit ${MAX_IMAGES})`);
+    }
+
+    let loaded = 0;
+    toAdd.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            imageQueue.push({ file, dataUrl: ev.target.result });
+            loaded++;
+            if (loaded === toAdd.length) {
+                updateThumbnails();
+                processAllImages();
+            }
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
-// --- OCR ---
-async function performOCR(file) {
+// --- Clear all ---
+clearImagesBtn.addEventListener('click', () => {
+    stopSpeaking();
+    imageQueue = [];
+    recognizedText = '';
+    updateThumbnails();
+    resultSection.hidden = true;
+    statusSection.hidden = true;
+});
+
+// --- Thumbnails ---
+function updateThumbnails() {
+    thumbnailStrip.innerHTML = '';
+    if (imageQueue.length === 0) {
+        thumbnailStrip.hidden = true;
+        imageCounter.hidden = true;
+        return;
+    }
+    thumbnailStrip.hidden = false;
+    imageCounter.hidden = false;
+    imageCountText.textContent = `${imageQueue.length} image${imageQueue.length > 1 ? 's' : ''}`;
+
+    imageQueue.forEach((item, idx) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'thumbnail';
+        thumb.innerHTML = `
+            <img src="${item.dataUrl}" alt="Image ${idx + 1}">
+            <span class="thumb-index">${idx + 1}</span>
+            <button class="thumb-remove" data-idx="${idx}">&times;</button>
+        `;
+        thumbnailStrip.appendChild(thumb);
+    });
+
+    // Remove individual image
+    thumbnailStrip.querySelectorAll('.thumb-remove').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.dataset.idx);
+            imageQueue.splice(idx, 1);
+            updateThumbnails();
+            if (imageQueue.length > 0) {
+                processAllImages();
+            } else {
+                resultSection.hidden = true;
+                statusSection.hidden = true;
+                recognizedText = '';
+            }
+        });
+    });
+}
+
+// --- OCR all images sequentially ---
+async function processAllImages() {
     stopSpeaking();
     resultSection.hidden = true;
     statusSection.hidden = false;
-    statusText.textContent = 'Loading recognition engine...';
-    progressFill.style.width = '10%';
+    recognizedText = '';
+
+    const total = imageQueue.length;
+    let allTexts = [];
 
     try {
+        statusText.textContent = 'Loading recognition engine...';
+        progressFill.style.width = '5%';
+
         const worker = await Tesseract.createWorker('chi_sim+eng', 1, {
-            logger: (m) => {
-                if (m.status === 'recognizing text') {
-                    const pct = Math.round(m.progress * 100);
-                    progressFill.style.width = `${10 + pct * 0.85}%`;
-                    statusText.textContent = `Recognizing... ${pct}%`;
-                }
-            }
+            logger: () => {}
         });
 
-        progressFill.style.width = '95%';
-        statusText.textContent = 'Extracting text...';
+        for (let i = 0; i < total; i++) {
+            const pctBase = (i / total) * 100;
+            const pctNext = ((i + 1) / total) * 100;
 
-        const { data } = await worker.recognize(file);
+            statusText.textContent = `Recognizing image ${i + 1} of ${total}...`;
+            progressFill.style.width = `${pctBase}%`;
+
+            const { data } = await worker.recognize(imageQueue[i].file);
+            const cleaned = cleanOCRText(data.text.trim());
+            if (cleaned) allTexts.push(cleaned);
+
+            progressFill.style.width = `${pctNext}%`;
+
+            // Highlight current thumbnail
+            const thumbs = thumbnailStrip.querySelectorAll('.thumbnail');
+            thumbs.forEach((t, j) => {
+                t.classList.toggle('done', j <= i);
+                t.classList.toggle('active', j === i);
+            });
+        }
+
         await worker.terminate();
 
-        recognizedText = cleanOCRText(data.text.trim());
+        recognizedText = allTexts.join('\n\n---\n\n');
         progressFill.style.width = '100%';
 
         if (!recognizedText) {
-            statusText.textContent = 'No text detected. Try a clearer image.';
+            statusText.textContent = 'No text detected in any image.';
             return;
         }
 
@@ -139,27 +230,21 @@ function detectLanguage(text) {
 
 // --- Clean OCR output ---
 function cleanOCRText(text) {
-    // Remove spaces between CJK characters (Tesseract inserts them)
     const cjk = '\\u4E00-\\u9FFF\\u3400-\\u4DBF\\uF900-\\uFAFF';
     const cjkPunc = '\\u3000-\\u303F\\uFF00-\\uFFEF';
     const re = new RegExp(`([${cjk}${cjkPunc}])\\s+([${cjk}${cjkPunc}])`, 'g');
-    // Run twice to catch overlapping matches (e.g. "A B C" → "AB C" → "ABC")
     let cleaned = text.replace(re, '$1$2');
     cleaned = cleaned.replace(re, '$1$2');
-    // Remove space between CJK and CJK punctuation
     cleaned = cleaned.replace(new RegExp(`([${cjk}])\\s+([，。！？、；：""''（）])`, 'g'), '$1$2');
     cleaned = cleaned.replace(new RegExp(`([，。！？、；：""''（）])\\s+([${cjk}])`, 'g'), '$1$2');
     return cleaned;
 }
 
-// Pre-load voices
+// --- Speech ---
 if (window.speechSynthesis) {
     window.speechSynthesis.getVoices();
     window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
 }
-
-// --- Speech: read aloud ---
-let keepAliveTimer = null;
 
 speakBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -181,11 +266,8 @@ function speak(text, lang) {
         showToast('Speech synthesis not supported');
         return;
     }
-
-    // Must cancel first
     window.speechSynthesis.cancel();
 
-    // Small delay after cancel to let browser reset
     setTimeout(() => {
         const effectiveLang = (lang === 'mixed') ? dominantLanguage(text) : lang;
         const langCode = effectiveLang === 'zh' ? 'zh-CN' : 'en-US';
@@ -195,7 +277,6 @@ function speak(text, lang) {
         u.rate = speechRate;
         u.pitch = 1.0;
 
-        // Try to find a matching voice
         const voices = window.speechSynthesis.getVoices();
         const match = voices.find(v => v.lang === langCode) ||
                       voices.find(v => v.lang.startsWith(effectiveLang === 'zh' ? 'zh' : 'en'));
@@ -214,7 +295,6 @@ function speak(text, lang) {
         window.speechSynthesis.speak(u);
         setSpeakingState(true);
 
-        // Chrome workaround: poke speechSynthesis to prevent it from stopping
         clearInterval(keepAliveTimer);
         keepAliveTimer = setInterval(() => {
             if (!window.speechSynthesis.speaking) {
@@ -240,9 +320,7 @@ function dominantLanguage(text) {
 
 function stopSpeaking() {
     clearInterval(keepAliveTimer);
-    if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-    }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
     setSpeakingState(false);
 }
 
@@ -253,7 +331,7 @@ function setSpeakingState(speaking) {
         speakBtn.classList.add('btn-stop');
         speakBtn.classList.remove('btn-primary');
     } else {
-        speakBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg> Read Aloud';
+        speakBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg> Read All';
         speakBtn.classList.remove('btn-stop');
         speakBtn.classList.add('btn-primary');
     }
@@ -286,7 +364,7 @@ function showToast(msg) {
     }, 2000);
 }
 
-// --- Service Worker: unregister old, register fresh ---
+// --- Service Worker ---
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.getRegistrations().then(regs => {
         regs.forEach(r => r.unregister());
