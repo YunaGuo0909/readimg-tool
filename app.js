@@ -214,59 +214,26 @@ function speak(text, lang) {
     }
     window.speechSynthesis.cancel();
 
-    // Split long text into sentences for more natural reading
-    if (lang === 'mixed') {
-        speakMixed(text);
-    } else {
-        const chunks = splitIntoSentences(text);
-        chunks.forEach((chunk, i) => {
-            const u = makeUtterance(chunk, lang);
-            if (i === chunks.length - 1) {
-                u.onend = () => setSpeakingState(false);
-            }
-            u.onerror = () => setSpeakingState(false);
-            window.speechSynthesis.speak(u);
-        });
-    }
+    // For mixed text, use dominant language for the whole block.
+    // Queuing multiple utterances causes Chrome to silently stall.
+    const effectiveLang = (lang === 'mixed') ? dominantLanguage(text) : lang;
+    const u = makeUtterance(text, effectiveLang);
+    u.onend = () => setSpeakingState(false);
+    u.onerror = () => setSpeakingState(false);
+    window.speechSynthesis.speak(u);
+
+    // Chrome bug workaround: speechSynthesis pauses on long text after ~15s.
+    // Periodically poke it to keep it alive.
+    const keepAlive = setInterval(() => {
+        if (!window.speechSynthesis.speaking) {
+            clearInterval(keepAlive);
+            return;
+        }
+        window.speechSynthesis.pause();
+        window.speechSynthesis.resume();
+    }, 10000);
+
     setSpeakingState(true);
-}
-
-function speakMixed(text) {
-    const segments = splitByLanguage(text);
-    segments.forEach((seg, i) => {
-        const u = makeUtterance(seg.text, seg.lang);
-        if (i === segments.length - 1) {
-            u.onend = () => setSpeakingState(false);
-        }
-        u.onerror = () => setSpeakingState(false);
-        window.speechSynthesis.speak(u);
-    });
-}
-
-function splitIntoSentences(text) {
-    // Split on sentence-ending punctuation, keeping short pauses natural
-    const parts = text.split(/(?<=[.!?\u3002\uff01\uff1f\n])\s*/);
-    return parts.filter(p => p.trim().length > 0);
-}
-
-function splitByLanguage(text) {
-    // First split into sentences, then detect language per sentence.
-    // This avoids splitting mid-sentence which causes character-by-character reading.
-    const sentences = text.split(/(?<=[.!?\u3002\uff01\uff1f\uff0c\u3001\n])\s*/).filter(s => s.trim());
-    if (sentences.length === 0) return [{ text, lang: 'en' }];
-
-    const segments = [];
-    for (const sentence of sentences) {
-        const lang = detectLanguage(sentence);
-        const sentLang = lang === 'unknown' ? 'en' : (lang === 'mixed' ? dominantLanguage(sentence) : lang);
-        // Merge with previous segment if same language
-        if (segments.length > 0 && segments[segments.length - 1].lang === sentLang) {
-            segments[segments.length - 1].text += ' ' + sentence;
-        } else {
-            segments.push({ text: sentence, lang: sentLang });
-        }
-    }
-    return segments;
 }
 
 function dominantLanguage(text) {
