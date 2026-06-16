@@ -89,7 +89,7 @@ function addFiles(fileList) {
     toAdd.forEach(file => {
         const reader = new FileReader();
         reader.onload = (ev) => {
-            imageQueue.push({ file, dataUrl: ev.target.result });
+            imageQueue.push({ file, dataUrl: ev.target.result, name: file.name });
             loaded++;
             if (loaded === toAdd.length) {
                 updateThumbnails();
@@ -110,7 +110,9 @@ clearImagesBtn.addEventListener('click', () => {
     statusSection.hidden = true;
 });
 
-// --- Thumbnails ---
+// --- Thumbnails with drag reorder ---
+let dragSrcIdx = null;
+
 function updateThumbnails() {
     thumbnailStrip.innerHTML = '';
     if (imageQueue.length === 0) {
@@ -125,13 +127,60 @@ function updateThumbnails() {
     imageQueue.forEach((item, idx) => {
         const thumb = document.createElement('div');
         thumb.className = 'thumbnail';
+        thumb.draggable = true;
+        thumb.dataset.idx = idx;
+
+        // Truncate filename for display
+        const displayName = truncName(item.name, 12);
+
         thumb.innerHTML = `
-            <img src="${item.dataUrl}" alt="Image ${idx + 1}">
+            <img src="${item.dataUrl}" alt="Image ${idx + 1}" draggable="false">
             <span class="thumb-index">${idx + 1}</span>
             <button class="thumb-remove" data-idx="${idx}">&times;</button>
+            <span class="thumb-name" title="${escHtml(item.name)}">${escHtml(displayName)}</span>
         `;
         thumbnailStrip.appendChild(thumb);
+
+        // --- Drag events for reorder ---
+        thumb.addEventListener('dragstart', (e) => {
+            dragSrcIdx = idx;
+            thumb.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', idx);
+        });
+        thumb.addEventListener('dragend', () => {
+            thumb.classList.remove('dragging');
+            thumbnailStrip.querySelectorAll('.thumbnail').forEach(t => t.classList.remove('drag-over-left', 'drag-over-right'));
+            dragSrcIdx = null;
+        });
+        thumb.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (dragSrcIdx === null || dragSrcIdx === idx) return;
+            const rect = thumb.getBoundingClientRect();
+            const midX = rect.left + rect.width / 2;
+            thumb.classList.toggle('drag-over-left', e.clientX < midX);
+            thumb.classList.toggle('drag-over-right', e.clientX >= midX);
+        });
+        thumb.addEventListener('dragleave', () => {
+            thumb.classList.remove('drag-over-left', 'drag-over-right');
+        });
+        thumb.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            thumb.classList.remove('drag-over-left', 'drag-over-right');
+            if (dragSrcIdx === null || dragSrcIdx === idx) return;
+            // Move item in array
+            const moved = imageQueue.splice(dragSrcIdx, 1)[0];
+            imageQueue.splice(idx, 0, moved);
+            dragSrcIdx = null;
+            updateThumbnails();
+            processAllImages();
+        });
     });
+
+    // --- Touch drag reorder ---
+    initTouchDrag();
 
     // Remove individual image
     thumbnailStrip.querySelectorAll('.thumb-remove').forEach(btn => {
@@ -149,6 +198,93 @@ function updateThumbnails() {
             }
         });
     });
+}
+
+function truncName(name, max) {
+    if (!name) return 'image';
+    const dot = name.lastIndexOf('.');
+    const base = dot > 0 ? name.substring(0, dot) : name;
+    const ext = dot > 0 ? name.substring(dot) : '';
+    if (base.length <= max) return name;
+    return base.substring(0, max) + '...' + ext;
+}
+
+function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// --- Touch drag for mobile ---
+function initTouchDrag() {
+    let touchSrcIdx = null;
+    let touchClone = null;
+    let touchOffsetX = 0;
+    let touchOffsetY = 0;
+
+    const thumbs = thumbnailStrip.querySelectorAll('.thumbnail');
+    thumbs.forEach((thumb, idx) => {
+        thumb.addEventListener('touchstart', (e) => {
+            if (e.target.classList.contains('thumb-remove')) return;
+            const touch = e.touches[0];
+            touchSrcIdx = idx;
+            const rect = thumb.getBoundingClientRect();
+            touchOffsetX = touch.clientX - rect.left;
+            touchOffsetY = touch.clientY - rect.top;
+
+            // Create floating clone after a brief hold
+            setTimeout(() => {
+                if (touchSrcIdx !== idx) return;
+                touchClone = thumb.cloneNode(true);
+                touchClone.className = 'thumbnail drag-clone';
+                touchClone.style.width = rect.width + 'px';
+                touchClone.style.height = rect.height + 'px';
+                document.body.appendChild(touchClone);
+                positionClone(touch.clientX, touch.clientY);
+                thumb.classList.add('dragging');
+            }, 150);
+        }, { passive: true });
+
+        thumb.addEventListener('touchmove', (e) => {
+            if (touchClone) {
+                e.preventDefault();
+                positionClone(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+        thumb.addEventListener('touchend', (e) => {
+            if (touchClone) {
+                const touch = e.changedTouches[0];
+                const targetIdx = getThumbIdxAtPoint(touch.clientX, touch.clientY);
+                document.body.removeChild(touchClone);
+                touchClone = null;
+                thumbs.forEach(t => t.classList.remove('dragging'));
+
+                if (targetIdx !== null && targetIdx !== touchSrcIdx) {
+                    const moved = imageQueue.splice(touchSrcIdx, 1)[0];
+                    imageQueue.splice(targetIdx, 0, moved);
+                    updateThumbnails();
+                    processAllImages();
+                }
+            }
+            touchSrcIdx = null;
+        });
+    });
+
+    function positionClone(cx, cy) {
+        if (!touchClone) return;
+        touchClone.style.left = (cx - touchOffsetX) + 'px';
+        touchClone.style.top = (cy - touchOffsetY) + 'px';
+    }
+
+    function getThumbIdxAtPoint(x, y) {
+        const allThumbs = thumbnailStrip.querySelectorAll('.thumbnail');
+        for (const t of allThumbs) {
+            const r = t.getBoundingClientRect();
+            if (x >= r.left && x <= r.right && y >= r.top - 20 && y <= r.bottom + 20) {
+                return parseInt(t.dataset.idx);
+            }
+        }
+        return null;
+    }
 }
 
 // --- OCR all images sequentially ---

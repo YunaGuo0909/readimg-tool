@@ -141,12 +141,16 @@ main {
 .thumbnail {
     position: relative;
     flex-shrink: 0;
-    width: 64px;
-    height: 64px;
+    width: 80px;
     border-radius: 8px;
-    overflow: hidden;
     border: 2px solid var(--border);
-    transition: border-color 0.2s;
+    transition: border-color 0.2s, opacity 0.15s, transform 0.15s;
+    cursor: grab;
+    user-select: none;
+}
+
+.thumbnail:active {
+    cursor: grabbing;
 }
 
 .thumbnail.active {
@@ -157,10 +161,31 @@ main {
     border-color: #86efac;
 }
 
+.thumbnail.dragging {
+    opacity: 0.35;
+}
+
+.thumbnail.drag-over-left {
+    border-left: 3px solid var(--text);
+}
+
+.thumbnail.drag-over-right {
+    border-right: 3px solid var(--text);
+}
+
+.thumbnail .thumb-img-wrap {
+    width: 100%;
+    height: 64px;
+    overflow: hidden;
+    border-radius: 6px 6px 0 0;
+}
+
 .thumbnail img {
     width: 100%;
-    height: 100%;
+    height: 64px;
     object-fit: cover;
+    display: block;
+    pointer-events: none;
 }
 
 .thumb-index {
@@ -205,6 +230,28 @@ main {
 
 @media (pointer: coarse) {
     .thumb-remove { opacity: 1; }
+}
+
+.thumb-name {
+    display: block;
+    font-size: 9px;
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 3px 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+
+/* Floating clone for touch drag */
+.drag-clone {
+    position: fixed;
+    z-index: 999;
+    opacity: 0.85;
+    pointer-events: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    transform: scale(1.08);
 }
 
 .image-counter {
