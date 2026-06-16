@@ -101,7 +101,7 @@ async function performOCR(file) {
         const { data } = await worker.recognize(file);
         await worker.terminate();
 
-        recognizedText = data.text.trim();
+        recognizedText = cleanOCRText(data.text.trim());
         progressFill.style.width = '100%';
 
         if (!recognizedText) {
@@ -135,6 +135,21 @@ function detectLanguage(text) {
     if (cn > 0) return 'zh';
     if (en > 0) return 'en';
     return 'unknown';
+}
+
+// --- Clean OCR output ---
+function cleanOCRText(text) {
+    // Remove spaces between CJK characters (Tesseract inserts them)
+    const cjk = '\\u4E00-\\u9FFF\\u3400-\\u4DBF\\uF900-\\uFAFF';
+    const cjkPunc = '\\u3000-\\u303F\\uFF00-\\uFFEF';
+    const re = new RegExp(`([${cjk}${cjkPunc}])\\s+([${cjk}${cjkPunc}])`, 'g');
+    // Run twice to catch overlapping matches (e.g. "A B C" → "AB C" → "ABC")
+    let cleaned = text.replace(re, '$1$2');
+    cleaned = cleaned.replace(re, '$1$2');
+    // Remove space between CJK and CJK punctuation
+    cleaned = cleaned.replace(new RegExp(`([${cjk}])\\s+([，。！？、；：""''（）])`, 'g'), '$1$2');
+    cleaned = cleaned.replace(new RegExp(`([，。！？、；：""''（）])\\s+([${cjk}])`, 'g'), '$1$2');
+    return cleaned;
 }
 
 // --- Speech: pick the best available voice ---
