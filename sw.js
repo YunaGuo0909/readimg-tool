@@ -1,4 +1,4 @@
-const CACHE_NAME = 'readimg-v1';
+const CACHE_NAME = 'readimg-v3';
 const ASSETS = [
     './',
     './index.html',

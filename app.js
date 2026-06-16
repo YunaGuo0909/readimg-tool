@@ -235,27 +235,33 @@ function splitIntoSentences(text) {
 }
 
 function splitByLanguage(text) {
+    // First split into sentences, then detect language per sentence.
+    // This avoids splitting mid-sentence which causes character-by-character reading.
+    const sentences = text.split(/(?<=[.!?\u3002\uff01\uff1f\uff0c\u3001\n])\s*/).filter(s => s.trim());
+    if (sentences.length === 0) return [{ text, lang: 'en' }];
+
     const segments = [];
-    let current = '';
-    let currentLang = null;
-
-    for (const ch of text) {
-        const code = ch.codePointAt(0);
-        let charLang = null;
-        if (code >= 0x4E00 && code <= 0x9FFF) charLang = 'zh';
-        else if ((code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)) charLang = 'en';
-
-        if (charLang && charLang !== currentLang && current.length > 0 && currentLang) {
-            segments.push({ text: current, lang: currentLang });
-            current = '';
+    for (const sentence of sentences) {
+        const lang = detectLanguage(sentence);
+        const sentLang = lang === 'unknown' ? 'en' : (lang === 'mixed' ? dominantLanguage(sentence) : lang);
+        // Merge with previous segment if same language
+        if (segments.length > 0 && segments[segments.length - 1].lang === sentLang) {
+            segments[segments.length - 1].text += ' ' + sentence;
+        } else {
+            segments.push({ text: sentence, lang: sentLang });
         }
-        if (charLang) currentLang = charLang;
-        current += ch;
-    }
-    if (current) {
-        segments.push({ text: current, lang: currentLang || 'en' });
     }
     return segments;
+}
+
+function dominantLanguage(text) {
+    let cn = 0, en = 0;
+    for (const ch of text) {
+        const code = ch.codePointAt(0);
+        if (code >= 0x4E00 && code <= 0x9FFF) cn++;
+        else if ((code >= 0x41 && code <= 0x5A) || (code >= 0x61 && code <= 0x7A)) en++;
+    }
+    return cn >= en ? 'zh' : 'en';
 }
 
 function stopSpeaking() {
