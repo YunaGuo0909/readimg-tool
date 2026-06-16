@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="图文朗读">
+    <meta name="theme-color" content="#1a73e8">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <title>图文朗读</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>图文朗读</h1>
+        <p class="subtitle">拍照或选图，识别并朗读文字</p>
+    </header>
+
+    <main>
+        <section class="input-section">
+            <div class="button-group">
+                <label class="btn btn-primary" id="cameraBtn">
+                    <span class="icon">📷</span> 拍照
+                    <input type="file" accept="image/*" capture="environment" id="cameraInput" hidden>
+                </label>
+                <label class="btn btn-secondary" id="galleryBtn">
+                    <span class="icon">🖼️</span> 相册
+                    <input type="file" accept="image/*" id="galleryInput" hidden>
+                </label>
+            </div>
+
+            <div id="previewContainer" class="preview-container" hidden>
+                <img id="previewImage" alt="预览图片">
+            </div>
+        </section>
+
+        <section id="statusSection" class="status-section" hidden>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="statusText">准备中...</p>
+        </section>
+
+        <section id="resultSection" class="result-section" hidden>
+            <div class="result-header">
+                <h2>识别结果</h2>
+                <span class="lang-badge" id="langBadge"></span>
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-primary" id="speakBtn">
+                    <span class="icon">🔊</span> 朗读
+                </button>
+                <button class="btn btn-outline" id="copyBtn">
+                    <span class="icon">📋</span> 复制
+                </button>
+            </div>
+
+            <div class="text-output" id="textOutput"></div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

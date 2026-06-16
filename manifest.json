@@ -1,0 +1,22 @@
+{
+    "name": "图文朗读",
+    "short_name": "图文朗读",
+    "description": "拍照或选图，识别并朗读中英文文字",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#f5f5f5",
+    "theme_color": "#1a73e8",
+    "orientation": "any",
+    "icons": [
+        {
+            "src": "icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }
+    ]
+}
