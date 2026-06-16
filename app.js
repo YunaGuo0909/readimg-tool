@@ -17,11 +17,13 @@ const speakBtn = document.getElementById('speakBtn');
 const copyBtn = document.getElementById('copyBtn');
 const speedRange = document.getElementById('speedRange');
 const speedValue = document.getElementById('speedValue');
+const pauseBtn = document.getElementById('pauseBtn');
 
-let imageQueue = [];       // { file, dataUrl }
+let imageQueue = [];       // { file, dataUrl, name }
 let recognizedText = '';
 let detectedLang = 'unknown';
 let isSpeaking = false;
+let isPaused = false;
 let speechRate = 1.0;
 let keepAliveTimer = null;
 
@@ -382,6 +384,7 @@ if (window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
 }
 
+// --- Play / Stop ---
 speakBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -397,12 +400,40 @@ speakBtn.addEventListener('click', (e) => {
     }
 });
 
+// --- Pause / Resume ---
+pauseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isSpeaking) return;
+
+    if (isPaused) {
+        window.speechSynthesis.resume();
+        isPaused = false;
+        updatePauseBtn();
+        startKeepAlive();
+    } else {
+        clearInterval(keepAliveTimer);
+        window.speechSynthesis.pause();
+        isPaused = true;
+        updatePauseBtn();
+    }
+});
+
+function updatePauseBtn() {
+    if (isPaused) {
+        pauseBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume';
+    } else {
+        pauseBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
+    }
+}
+
 function speak(text, lang) {
     if (!window.speechSynthesis) {
         showToast('Speech synthesis not supported');
         return;
     }
     window.speechSynthesis.cancel();
+    isPaused = false;
 
     setTimeout(() => {
         const effectiveLang = (lang === 'mixed') ? dominantLanguage(text) : lang;
@@ -430,18 +461,24 @@ function speak(text, lang) {
 
         window.speechSynthesis.speak(u);
         setSpeakingState(true);
+        startKeepAlive();
+    }, 100);
+}
 
-        clearInterval(keepAliveTimer);
-        keepAliveTimer = setInterval(() => {
-            if (!window.speechSynthesis.speaking) {
-                clearInterval(keepAliveTimer);
-                setSpeakingState(false);
-                return;
-            }
+function startKeepAlive() {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = setInterval(() => {
+        if (!window.speechSynthesis.speaking && !isPaused) {
+            clearInterval(keepAliveTimer);
+            setSpeakingState(false);
+            return;
+        }
+        // Only poke if not paused
+        if (!isPaused) {
             window.speechSynthesis.pause();
             window.speechSynthesis.resume();
-        }, 10000);
-    }, 100);
+        }
+    }, 10000);
 }
 
 function dominantLanguage(text) {
@@ -456,12 +493,16 @@ function dominantLanguage(text) {
 
 function stopSpeaking() {
     clearInterval(keepAliveTimer);
+    isPaused = false;
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     setSpeakingState(false);
 }
 
 function setSpeakingState(speaking) {
     isSpeaking = speaking;
+    isPaused = false;
+    pauseBtn.hidden = !speaking;
+    updatePauseBtn();
     if (speaking) {
         speakBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop';
         speakBtn.classList.add('btn-stop');
