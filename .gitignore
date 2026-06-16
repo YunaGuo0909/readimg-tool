@@ -13,3 +13,8 @@ xcuserdata/
 
 ## macOS
 .DS_Store
+
+## Test images
+*.png
+!icon-192.png
+!icon-512.png
