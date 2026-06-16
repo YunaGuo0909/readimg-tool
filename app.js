@@ -1,5 +1,6 @@
 const cameraInput = document.getElementById('cameraInput');
 const galleryInput = document.getElementById('galleryInput');
+const dropZone = document.getElementById('dropZone');
 const previewContainer = document.getElementById('previewContainer');
 const previewImage = document.getElementById('previewImage');
 const statusSection = document.getElementById('statusSection');
@@ -10,19 +11,62 @@ const textOutput = document.getElementById('textOutput');
 const langBadge = document.getElementById('langBadge');
 const speakBtn = document.getElementById('speakBtn');
 const copyBtn = document.getElementById('copyBtn');
+const speedRange = document.getElementById('speedRange');
+const speedValue = document.getElementById('speedValue');
 
 let recognizedText = '';
 let detectedLang = 'unknown';
 let isSpeaking = false;
+let speechRate = 1.0;
 
-// Image input handlers
+// --- Speed control ---
+speedRange.addEventListener('input', () => {
+    speechRate = parseFloat(speedRange.value);
+    speedValue.textContent = speechRate.toFixed(1) + 'x';
+});
+
+// --- Image input: file picker ---
 cameraInput.addEventListener('change', handleImageSelect);
 galleryInput.addEventListener('change', handleImageSelect);
 
 function handleImageSelect(e) {
     const file = e.target.files[0];
     if (!file) return;
+    loadFileAsImage(file);
+    e.target.value = '';
+}
 
+// --- Image input: paste ---
+document.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+        if (item.type.startsWith('image/')) {
+            e.preventDefault();
+            loadFileAsImage(item.getAsFile());
+            return;
+        }
+    }
+});
+
+// --- Image input: drag & drop ---
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+});
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+});
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+        loadFileAsImage(file);
+    }
+});
+
+function loadFileAsImage(file) {
     const reader = new FileReader();
     reader.onload = (ev) => {
         previewImage.src = ev.target.result;
@@ -30,15 +74,14 @@ function handleImageSelect(e) {
         performOCR(file);
     };
     reader.readAsDataURL(file);
-    e.target.value = '';
 }
 
-// OCR
+// --- OCR ---
 async function performOCR(file) {
     stopSpeaking();
     resultSection.hidden = true;
     statusSection.hidden = false;
-    statusText.textContent = '正在加载识别引擎...';
+    statusText.textContent = 'Loading recognition engine...';
     progressFill.style.width = '10%';
 
     try {
@@ -47,13 +90,13 @@ async function performOCR(file) {
                 if (m.status === 'recognizing text') {
                     const pct = Math.round(m.progress * 100);
                     progressFill.style.width = `${10 + pct * 0.85}%`;
-                    statusText.textContent = `识别中... ${pct}%`;
+                    statusText.textContent = `Recognizing... ${pct}%`;
                 }
             }
         });
 
         progressFill.style.width = '95%';
-        statusText.textContent = '正在提取文字...';
+        statusText.textContent = 'Extracting text...';
 
         const { data } = await worker.recognize(file);
         await worker.terminate();
@@ -62,25 +105,25 @@ async function performOCR(file) {
         progressFill.style.width = '100%';
 
         if (!recognizedText) {
-            statusText.textContent = '未识别到文字，请尝试更清晰的图片';
+            statusText.textContent = 'No text detected. Try a clearer image.';
             return;
         }
 
         detectedLang = detectLanguage(recognizedText);
         langBadge.textContent = {
-            zh: '中文', en: 'English', mixed: '中英混合', unknown: '未知'
+            zh: 'Chinese', en: 'English', mixed: 'Mixed', unknown: 'Unknown'
         }[detectedLang];
 
         textOutput.textContent = recognizedText;
         resultSection.hidden = false;
         statusSection.hidden = true;
     } catch (err) {
-        statusText.textContent = '识别失败: ' + err.message;
+        statusText.textContent = 'Recognition failed: ' + err.message;
         progressFill.style.width = '0%';
     }
 }
 
-// Language detection
+// --- Language detection ---
 function detectLanguage(text) {
     let cn = 0, en = 0;
     for (const ch of text) {
@@ -94,7 +137,42 @@ function detectLanguage(text) {
     return 'unknown';
 }
 
-// Speech
+// --- Speech: pick the best available voice ---
+let voiceCache = {};
+
+function getBestVoice(langCode) {
+    if (voiceCache[langCode]) return voiceCache[langCode];
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+
+    // Prefer natural / premium / enhanced voices
+    const premium = ['natural', 'premium', 'enhanced', 'neural', 'wavenet'];
+    const matching = voices.filter(v => v.lang.startsWith(langCode));
+
+    for (const v of matching) {
+        const name = v.name.toLowerCase();
+        if (premium.some(kw => name.includes(kw))) {
+            voiceCache[langCode] = v;
+            return v;
+        }
+    }
+    // Fallback: prefer non-compact local voice
+    const local = matching.find(v => v.localService);
+    const result = local || matching[0] || null;
+    if (result) voiceCache[langCode] = result;
+    return result;
+}
+
+// Pre-load voices
+if (window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => {
+        voiceCache = {};
+        window.speechSynthesis.getVoices();
+    };
+}
+
+// --- Speech: read aloud ---
 speakBtn.addEventListener('click', () => {
     if (isSpeaking) {
         stopSpeaking();
@@ -103,21 +181,37 @@ speakBtn.addEventListener('click', () => {
     }
 });
 
+function makeUtterance(text, lang) {
+    const u = new SpeechSynthesisUtterance(text);
+    const langCode = lang === 'zh' ? 'zh' : 'en';
+    u.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
+    u.rate = speechRate;
+    u.pitch = 1.0;
+    const voice = getBestVoice(langCode);
+    if (voice) u.voice = voice;
+    return u;
+}
+
 function speak(text, lang) {
     if (!('speechSynthesis' in window)) {
-        showToast('当前浏览器不支持语音朗读');
+        showToast('Speech synthesis not supported');
         return;
     }
     window.speechSynthesis.cancel();
 
+    // Split long text into sentences for more natural reading
     if (lang === 'mixed') {
         speakMixed(text);
     } else {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
-        utterance.onend = () => setSpeakingState(false);
-        utterance.onerror = () => setSpeakingState(false);
-        window.speechSynthesis.speak(utterance);
+        const chunks = splitIntoSentences(text);
+        chunks.forEach((chunk, i) => {
+            const u = makeUtterance(chunk, lang);
+            if (i === chunks.length - 1) {
+                u.onend = () => setSpeakingState(false);
+            }
+            u.onerror = () => setSpeakingState(false);
+            window.speechSynthesis.speak(u);
+        });
     }
     setSpeakingState(true);
 }
@@ -125,14 +219,19 @@ function speak(text, lang) {
 function speakMixed(text) {
     const segments = splitByLanguage(text);
     segments.forEach((seg, i) => {
-        const utterance = new SpeechSynthesisUtterance(seg.text);
-        utterance.lang = seg.lang === 'zh' ? 'zh-CN' : 'en-US';
+        const u = makeUtterance(seg.text, seg.lang);
         if (i === segments.length - 1) {
-            utterance.onend = () => setSpeakingState(false);
+            u.onend = () => setSpeakingState(false);
         }
-        utterance.onerror = () => setSpeakingState(false);
-        window.speechSynthesis.speak(utterance);
+        u.onerror = () => setSpeakingState(false);
+        window.speechSynthesis.speak(u);
     });
+}
+
+function splitIntoSentences(text) {
+    // Split on sentence-ending punctuation, keeping short pauses natural
+    const parts = text.split(/(?<=[.!?\u3002\uff01\uff1f\n])\s*/);
+    return parts.filter(p => p.trim().length > 0);
 }
 
 function splitByLanguage(text) {
@@ -166,35 +265,33 @@ function stopSpeaking() {
 
 function setSpeakingState(speaking) {
     isSpeaking = speaking;
-    speakBtn.innerHTML = speaking
-        ? '<span class="icon">⏹️</span> 停止'
-        : '<span class="icon">🔊</span> 朗读';
     if (speaking) {
-        speakBtn.classList.add('btn-danger');
+        speakBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg> Stop';
+        speakBtn.classList.add('btn-stop');
         speakBtn.classList.remove('btn-primary');
     } else {
-        speakBtn.classList.remove('btn-danger');
+        speakBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg> Read Aloud';
+        speakBtn.classList.remove('btn-stop');
         speakBtn.classList.add('btn-primary');
     }
 }
 
-// Copy
+// --- Copy ---
 copyBtn.addEventListener('click', () => {
     navigator.clipboard.writeText(recognizedText).then(() => {
-        showToast('已复制到剪贴板');
+        showToast('Copied to clipboard');
     }).catch(() => {
-        // Fallback for iOS
         const ta = document.createElement('textarea');
         ta.value = recognizedText;
         document.body.appendChild(ta);
         ta.select();
         document.execCommand('copy');
         document.body.removeChild(ta);
-        showToast('已复制到剪贴板');
+        showToast('Copied to clipboard');
     });
 });
 
-// Toast
+// --- Toast ---
 function showToast(msg) {
     const toast = document.getElementById('toast');
     toast.textContent = msg;
@@ -206,7 +303,7 @@ function showToast(msg) {
     }, 2000);
 }
 
-// Register Service Worker
+// --- Service Worker ---
 if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
 }

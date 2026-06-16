@@ -1,11 +1,11 @@
 {
-    "name": "图文朗读",
-    "short_name": "图文朗读",
-    "description": "拍照或选图，识别并朗读中英文文字",
+    "name": "ReadAloud",
+    "short_name": "ReadAloud",
+    "description": "Capture, recognize, and read text aloud in English and Chinese",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#f5f5f5",
-    "theme_color": "#1a73e8",
+    "background_color": "#fafafa",
+    "theme_color": "#ffffff",
     "orientation": "any",
     "icons": [
         {
