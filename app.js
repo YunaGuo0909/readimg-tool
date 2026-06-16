@@ -152,88 +152,80 @@ function cleanOCRText(text) {
     return cleaned;
 }
 
-// --- Speech: pick the best available voice ---
-let voiceCache = {};
-
-function getBestVoice(langCode) {
-    if (voiceCache[langCode]) return voiceCache[langCode];
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices.length) return null;
-
-    // Prefer natural / premium / enhanced voices
-    const premium = ['natural', 'premium', 'enhanced', 'neural', 'wavenet'];
-    const matching = voices.filter(v => v.lang.startsWith(langCode));
-
-    for (const v of matching) {
-        const name = v.name.toLowerCase();
-        if (premium.some(kw => name.includes(kw))) {
-            voiceCache[langCode] = v;
-            return v;
-        }
-    }
-    // Fallback: prefer non-compact local voice
-    const local = matching.find(v => v.localService);
-    const result = local || matching[0] || null;
-    if (result) voiceCache[langCode] = result;
-    return result;
-}
-
 // Pre-load voices
 if (window.speechSynthesis) {
     window.speechSynthesis.getVoices();
-    window.speechSynthesis.onvoiceschanged = () => {
-        voiceCache = {};
-        window.speechSynthesis.getVoices();
-    };
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
 }
 
 // --- Speech: read aloud ---
-speakBtn.addEventListener('click', () => {
-    if (isSpeaking) {
-        stopSpeaking();
-    } else {
-        speak(recognizedText, detectedLang);
+let keepAliveTimer = null;
+
+speakBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+        if (isSpeaking) {
+            stopSpeaking();
+        } else {
+            speak(recognizedText, detectedLang);
+        }
+    } catch (err) {
+        console.error('Speech error:', err);
+        showToast('Speech error: ' + err.message);
     }
 });
 
-function makeUtterance(text, lang) {
-    const u = new SpeechSynthesisUtterance(text);
-    const langCode = lang === 'zh' ? 'zh' : 'en';
-    u.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
-    u.rate = speechRate;
-    u.pitch = 1.0;
-    const voice = getBestVoice(langCode);
-    if (voice) u.voice = voice;
-    return u;
-}
-
 function speak(text, lang) {
-    if (!('speechSynthesis' in window)) {
+    if (!window.speechSynthesis) {
         showToast('Speech synthesis not supported');
         return;
     }
+
+    // Must cancel first
     window.speechSynthesis.cancel();
 
-    // For mixed text, use dominant language for the whole block.
-    // Queuing multiple utterances causes Chrome to silently stall.
-    const effectiveLang = (lang === 'mixed') ? dominantLanguage(text) : lang;
-    const u = makeUtterance(text, effectiveLang);
-    u.onend = () => setSpeakingState(false);
-    u.onerror = () => setSpeakingState(false);
-    window.speechSynthesis.speak(u);
+    // Small delay after cancel to let browser reset
+    setTimeout(() => {
+        const effectiveLang = (lang === 'mixed') ? dominantLanguage(text) : lang;
+        const langCode = effectiveLang === 'zh' ? 'zh-CN' : 'en-US';
 
-    // Chrome bug workaround: speechSynthesis pauses on long text after ~15s.
-    // Periodically poke it to keep it alive.
-    const keepAlive = setInterval(() => {
-        if (!window.speechSynthesis.speaking) {
-            clearInterval(keepAlive);
-            return;
-        }
-        window.speechSynthesis.pause();
-        window.speechSynthesis.resume();
-    }, 10000);
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = langCode;
+        u.rate = speechRate;
+        u.pitch = 1.0;
 
-    setSpeakingState(true);
+        // Try to find a matching voice
+        const voices = window.speechSynthesis.getVoices();
+        const match = voices.find(v => v.lang === langCode) ||
+                      voices.find(v => v.lang.startsWith(effectiveLang === 'zh' ? 'zh' : 'en'));
+        if (match) u.voice = match;
+
+        u.onend = () => {
+            clearInterval(keepAliveTimer);
+            setSpeakingState(false);
+        };
+        u.onerror = (e) => {
+            console.error('Speech utterance error:', e);
+            clearInterval(keepAliveTimer);
+            setSpeakingState(false);
+        };
+
+        window.speechSynthesis.speak(u);
+        setSpeakingState(true);
+
+        // Chrome workaround: poke speechSynthesis to prevent it from stopping
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = setInterval(() => {
+            if (!window.speechSynthesis.speaking) {
+                clearInterval(keepAliveTimer);
+                setSpeakingState(false);
+                return;
+            }
+            window.speechSynthesis.pause();
+            window.speechSynthesis.resume();
+        }, 10000);
+    }, 100);
 }
 
 function dominantLanguage(text) {
@@ -247,7 +239,10 @@ function dominantLanguage(text) {
 }
 
 function stopSpeaking() {
-    window.speechSynthesis.cancel();
+    clearInterval(keepAliveTimer);
+    if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+    }
     setSpeakingState(false);
 }
 
@@ -291,7 +286,11 @@ function showToast(msg) {
     }, 2000);
 }
 
-// --- Service Worker ---
+// --- Service Worker: unregister old, register fresh ---
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister());
+    }).then(() => {
+        navigator.serviceWorker.register('sw.js');
+    }).catch(() => {});
 }
